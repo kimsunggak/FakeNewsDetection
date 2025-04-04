@@ -5,7 +5,7 @@ import dotenv
 from openai import OpenAI
 import openai
 import json
-from extract_claim import extract_claims_and_evidence_lc
+from extract_keywords import extract_claims_and_evidence, extract_keywords_from_claim_evidence
 
 def download_audio_from_youtube(youtube_url, output_base="downloaded_audio"):
     """
@@ -110,9 +110,12 @@ if __name__ == "__main__":
             print(f"파일 삭제 중 오류 발생: {e}")
     # 1) 핵심 주장과 근거 추출 (LangChain 활용)
         print("\n=== 핵심 주장 및 근거 추출 ===")
-        result = extract_claims_and_evidence_lc(transcript)
+        result = extract_claims_and_evidence(transcript)
         print(json.dumps(result, ensure_ascii=False, indent=2))
-
+    # 2) 주장/근거에서 키워드 추출 (LangChain 활용)
+        print("\n=== 주장/근거에서 키워드 추출 ===")
+        keywords = extract_keywords_from_claim_evidence(result)
+        print(json.dumps(keywords, ensure_ascii=False, indent=2))
     # 메타데이터 가져오기
     metadata = get_video_metadata(video_url)
     if metadata:
