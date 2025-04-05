@@ -12,6 +12,7 @@ Thumbs.db
 env/
 venv/
 .venv/
+myenv/
 
 # 기타 (IDE 설정 파일, 비밀 키 파일 등)
 .idea/
