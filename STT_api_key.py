@@ -6,6 +6,7 @@ from openai import OpenAI
 import openai
 import json
 from extract_keywords import extract_claims_and_evidence, extract_keywords_from_claim_evidence
+import csv
 
 def download_audio_from_youtube(youtube_url, output_base="downloaded_audio"):
     """
@@ -95,9 +96,38 @@ def get_video_metadata(youtube_url):
         print(f"Stderr: {e.stderr}")
         return None
 
+# 추출된 데이터 CSV파일로 저장
+def save_data_to_csv(video_url,transcript,claim_evidence,keywords,metadata):
+    filename = "youtube_data.csv"
+    with open(filename, "w", newline="", encoding="utf-8") as csvfile:
+        fieldnames = [
+            "video_url", "transcript", "claim", "evidence",
+            "keywords", "upload_date", "view_count", "like_count", "comment_count"
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow({
+            "video_url": video_url,
+            "transcript": transcript,
+            "claim": claim_evidence.get("주장", ""),
+            # evidence와 keywords는 리스트이므로 JSON 문자열로 저장 (가독성 및 재사용성 때문에)
+            "evidence": json.dumps(claim_evidence.get("근거", []), ensure_ascii=False),
+            "keywords": json.dumps(keywords.get("keywords", []), ensure_ascii=False),
+            "upload_date": metadata.get("upload_date", ""),
+            "view_count": metadata.get("view_count", ""),
+            "like_count": metadata.get("like_count", ""),
+            "comment_count": metadata.get("comment_count", "")
+        })
+    print(f"데이터가 {filename} 파일에 저장되었습니다.")
+
+
 if __name__ == "__main__":
     video_url = input("음성을 다운로드할 유튜브 영상 주소를 입력하세요: ")
     audio = download_audio_from_youtube(video_url)
+    transcript = None
+    claim_evidence = None
+    keywords = None
+    metadata = None
     if audio:
         transcript = transcribe_audio_openai(audio)
         print("\n=== 변환된 텍스트 ===")
@@ -110,22 +140,26 @@ if __name__ == "__main__":
             print(f"파일 삭제 중 오류 발생: {e}")
     # 1) 핵심 주장과 근거 추출 (LangChain 활용)
         print("\n=== 핵심 주장 및 근거 추출 ===")
-        result = extract_claims_and_evidence(transcript)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        claim_evidence = extract_claims_and_evidence(transcript)
+        print(json.dumps(claim_evidence, ensure_ascii=False, indent=2))
     # 2) 주장/근거에서 키워드 추출 (LangChain 활용)
         print("\n=== 주장/근거에서 키워드 추출 ===")
-        keywords = extract_keywords_from_claim_evidence(result)
+        keywords = extract_keywords_from_claim_evidence(claim_evidence)
         print(json.dumps(keywords, ensure_ascii=False, indent=2))
-    # 메타데이터 가져오기
-    metadata = get_video_metadata(video_url)
-    if metadata:
-        print("\n=== 영상 메타데이터 ===")
-        for key, label in [
-            ("upload_date", "업로드 날짜"),
-            ("view_count", "조회수"),
-            ("like_count", "좋아요 수"),
-            ("comment_count", "댓글 수")
-        ]:
-            print(f"{label}: {metadata.get(key, '정보 없음')}")
-    else:
-        print("메타데이터를 가져오는 데 실패했습니다.")
+        # 메타데이터 가져오기
+        metadata = get_video_metadata(video_url)
+        if metadata:
+            print("\n=== 영상 메타데이터 ===")
+            for key, label in [
+                ("upload_date", "업로드 날짜"),
+                ("view_count", "조회수"),
+                ("like_count", "좋아요 수"),
+                ("comment_count", "댓글 수")
+            ]:
+                print(f"{label}: {metadata.get(key, '정보 없음')}")
+        else:
+            print("메타데이터를 가져오는 데 실패했습니다.")
+    if transcript and claim_evidence and keywords and metadata:
+        save_data_to_csv(video_url, transcript, claim_evidence, keywords, metadata)
+        print("\n=== CSV 파일로 저장 완료 ===")
+
