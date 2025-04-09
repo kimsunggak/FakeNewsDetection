@@ -11,6 +11,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage
 # 출력 결과를 JSON 형식으로 파싱
 from langchain_core.output_parsers import JsonOutputParser
+# 출력을 텍스트로만 뽑기 위해서서
+from langchain_core.output_parsers import StrOutputParser
 # Pydantic을 사용하여 데이터 스키마를 정의하기 위한 모듈
 # pydantic : 데이터 유효성 검사와 설정 관리에 사용되는 파이썬 라이브러리
 # pydantic의 핵심은 타입 힌트를 기반으로 입력 데이터를 자동으로 검증하고 변환하는 것
@@ -18,6 +20,60 @@ from pydantic import BaseModel, Field
 # ??
 from typing import List
 
+dotenv.load_dotenv()
+openai.api_key = os.environ.get("OPENAI_API_KEY")
+
+# 텍스트 정제 함수 선언
+def clean_text(text:str):
+    system_message = (
+        """
+        너는 텍스트 내에서 문맥의 흐름에 맞지 않는 오탈자를 탐지하여, 문맥에 부합하는 적절한 표현으로 수정하는 텍스트 분석 전문가야.
+        주어진 텍스트에서 문맥에 어색하거나 부자연스러운 표현을 식별한 후, 이를 자연스럽게 수정하여 전체 문장이 원활하게 연결되도록 해야한다.
+        문장을 이해하는 방식은 다음과 같다.
+        - 단순히 단어의 사전적 의미뿐만 아니라 문맥 속에서 단어가 가지는 함축적 의미나 뉘앙스를 고려해야한다.
+        - 특정 전문 분야의 텍스트일 경우, 해당 분야의 용어 사용 관례나 특수성을 이해하고 적용해야 한다.
+        - 특히 전문 용어는 함부로 다른 용어로 바꾸지 말고 발음 유사성을 반드시 고려해서 수정해야 합니다.
+        예를 들면 비누세포 폐암은 비소세포 폐암을 잘못 인식한 단어이다. "소세포 폐암"과 "비소세포 폐암"은 전혀 다른 질환이므로, 단순히 소리만 유사하다고 해서 "소세포 폐암"으로 바꾸지 말라.
+        - 음성 데이터를 텍스트로 변환한 후의 텍스트라 완전 다른 단어가 아닌 발음이 비슷한 단어로 잘못 인식된 경우일 확률이 높다.
+        문장에서 단어의 오류를 탐지하는 원칙은 다음과 같다.
+        - 분석할 텍스트는 음성 데이터를 텍스트로 변환한 결과물이다.
+        - 오류로 탐지된 단어들은 발음이 비슷한 단어로 잘못 인식된 경우가 많다.
+            예를 들면 4기 -> 사기,자기 , 12개월 -> 11개월 , 
+        - 단순히 철자가 틀린 것 뿐만 아니라, 문맥상 의미가 통하지 않거나 어색한 단어를 찾아내는데 집중해야 한다.
+        - 오류를 감지한 후 해당 문장 전반적인 문법적 정확성과 표현의 자연스러움을 반드시 재검토하여 최종 확인해본다.
+        문장 교정 원칙은 다음과 같다.
+        - 문맥에 어울리지 않는 단어를 찾아내고, 그 단어를 문맥에 맞는 적절한 표현으로 수정한다.
+        - 텍스트는 음성 데이터를 텍스트로 변환한 결과물이라는것을 고려해야한다.
+        - 오류로 탐지된 단어는 발음이 유사한 단어일 가능성이 높으므로, 완전히 다른 단어로 수정하기보다는 발음이 유사한 단어로 수정하는 것이 우선이다.
+            예를 들면 정변 -> 병변, 사기 -> 자기가 아니라 4기로 수정해야 하빈다.
+        - 수정할 단어는 해당 문맥에서 가장 자연스럽고 의미가 명확하게 전달되는 표현이어야 한다.
+        - 명확한 판단이 어려울 경우 임의로 수정하기보다는 해당 부분을 *로 표시한다.
+        - 단어를 수정한 후 해당 문장 전체의 문법적 정확성과 자연스러운 표현 여부를 반드시 재확인한다.
+        - 전체 문장을 그대로 출력하되, 문장 내 오류가 있는 부분만 정확하게 수정하여 반영하세요.
+        """
+    )
+    user_message= (
+        """
+        다음 텍스트 {text}내에서 문맥의 흐름에 맞지 않는 오탈자를 탐지하여, 문맥에 부합하는 적절한 표현으로 수정해주세요 
+        단순히 단어의 사전적 의미에 국한하지 않고, 문맥 속에서 나타나는 함축적 의미와 뉘앙스를 고려하여 문장을 해석한 후, 오류를 탐지하세요.
+        오류를 식별한 후에는 해당 문장의 전반적인 문법적 정확성과 표현의 자연스러움을 재검토하여, 전체 문장이 매끄럽고 문법적으로 올바르게 수정되도록 하세요.
+        오류로 탐지된 단어는 발음이 유사한 단어일 가능성이 높으므로, 완전히 다른 단어로 수정하기보다는 발음이 유사한 단어로 수정하는 것이 우선이다.
+        문맥이 자연스럽고 문법적으로 정확한지 재검토한 후, 애매하거나 잘못된 부분이 발견되면 오류 탐지 단계를 다시 수행하여 한 번 더 검증하고 수정하세요.
+        재검토 한 후에도 애매한 부분이 없다면 그대로 출력하세요. 애매한 부분이 있다면 *로 표시하세요.
+        """
+    )
+    prompt = ChatPromptTemplate.from_messages([
+        ("system",system_message),
+        ("user",user_message)
+    ])
+    # LLM 객체 생성
+    llm = ChatOpenAI(model_name='gpt-4o')
+    # 여러 단계를 연결하는 'Chain(체인)'을 구성 - LangChain Expression Language (LCEL)의 파이프(|) 연산자
+    chain = prompt | llm | StrOutputParser()
+    cleaned_text = chain.invoke({"text": text})
+    print("텍스트 정제 완료")
+    return cleaned_text
+"""
 # BaseModel : pydantic에서 제공하는 기본 모델 클래스 상속 받아 사용
 # 이 클래스를 인스턴스화(클래스를 바탕으로 실제 객체를 생성)할 때, BaseModel은 자동으로 입력 데이터의 타입과 구조가 정확한지 검증
 # 원하는 데이터 구조(예: { "claim": "주장 내용", "evidence": ["근거1", "근거2"] })
@@ -91,47 +147,12 @@ def extract_keywords_from_claim_evidence(claim_evidence: dict, model_name: str =
     parser = JsonOutputParser(pydantic_object=Keywords)
     # 프롬프트 템플릿 수정: 근거의 진위 여부를 확인할 수 있는 구체적 문구를 추출하도록 요청
     keyword_prompt = ChatPromptTemplate.from_messages([
-    ("system", """
-[의료 과학 검색어 생성 규칙]
-당신은 **사실 검증용 검색어 최적화 전문가**입니다. 다음 원칙을 엄격히 적용하세요:
-
-1. **핵심 개체 식별 범위** (모든 검색어에 2개 이상 포함 필수)
-   • 기관: 병원/연구소/제약사명 (예: 서울대병원, 화이자)
-   • 질병: 정확한 병명 + 병기 (예: 비소세포폐암 4기)
-   • 치료법: 약물 상품명(성분명) + 투여 기간 (예: 렉라자(레크토닙) 6개월)
-   • 결과: 수치 포함 증거 (예: 11개월 무재발, 종양 70% 감소)
-
-2. **검색어 생성 전략**
-   • (필수) 기관 + 질병 + 치료법 + 결과 조합
-   • (선택) 다국어 병기: "EGFR 돌연변이" → "EGFR mutation"
-   • 자연스러운 구어체 문장 (예: "유한양행 렉라자 폐암 4기 완전관해 사례")
-
-3. **금지 사항**
-   ※ 모호한 일반 용어 (예: "최신 치료법")
-   ※ 특수문자(#/) 사용
-
-4. **출력 형식**
-   → {format_instructions}
-   → 5~7개 검색어 생성
-
-[예시 출력]
-**Good**: 
-- "영남대병원 비소세포폐암 4기 렉라자 6개월 투여 사례" 
-- "레크토닙 EGFR 돌연변이(mutation) 생존율 연구"
-- "폐암 4기 완전관해 11개월 무재발 통계"
-
-**Bad**: 
-- "암 치료" (too generic)
-- "렉라자" (single word)
-"""),
-    ("user", """
-▶︎ 검증 대상 텍스트:
-{combined_text}
-
-▶︎ 검색어 생성 조건:
-- 의학적 정확성 100% 보장
-- 검색 결과 신뢰도 최적화
-""")
+    (
+        "system",
+    ),
+    (
+        "user",
+    )
 ])
 
     llm = ChatOpenAI(model_name=model_name)
@@ -143,13 +164,16 @@ def extract_keywords_from_claim_evidence(claim_evidence: dict, model_name: str =
     })
     print("핵심 키워드 추출 완료.")
     return result_keywords
-
+"""
 # --- 테스트 실행 ---
 if __name__ == "__main__":
     test_transcript = """
-현재 난리난 국내 최초 폐암 4기 완치 사례. 한 63세 남성이 일주일간 언어장애를 호소하며 영남대 응급실을 찾았는데, 비소세포 폐암으로 판명됨.
-이 환자는 6개월간 유한양행의 폐암치료제 렉라자를 투여받았으며, 기존 암세포가 모두 사라져 완전 관해 판정을 받았고, 이후 11개월간 재발 증거는 발견되지 않음.
-일부에서는 담배를 안 끊어도 되는 것 아니냐는 반응도 나옴.
+    현재 난리난 국내 최초 폐암 사기 완치 사례. 한 63세 남성이 일주일간 언어장애를 호소하다 영남대 응급실을 찾았는데 자기 비누세포 폐암으로 판명됨. 이 환자는 6개월간 유한양행의 폐암치료제 렉라자를 투여받았는데 정변이 모두 사라지고 새로운 암세포가 보이지 않는 완전관의 판정을 받음. 환자는 이후에도 렉라자를 투여받고 있는데 11개월간 재발 증거는 발견되지 않음. 담배 안 끌어도 되겠는데?
+    """
+    cleaned_text = clean_text(test_transcript)
+    print("\n=== 정제된 텍스트 ===")
+    print(cleaned_text)
+    
     """
     # 핵심 주장 및 근거 추출
     claim_evidence_result = extract_claims_and_evidence(test_transcript)
@@ -160,3 +184,4 @@ if __name__ == "__main__":
     keywords_result = extract_keywords_from_claim_evidence(claim_evidence_result)
     print("\n=== 핵심 키워드 추출 결과 ===")
     print(json.dumps(keywords_result, ensure_ascii=False, indent=2))
+    """
