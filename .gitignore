@@ -20,3 +20,5 @@ myenv/
 *.env
 *.log
 *csv
+
+*.pdf
