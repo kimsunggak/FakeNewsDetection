@@ -46,7 +46,97 @@ def search_arxiv(keyword,max_papers=10):
     except Exception as e:
         print(f"arxiv에서 논문 검색 중 오류 발생: {e}")
         return None
+    
+import xml.etree.ElementTree as ET
+def get_pmc_body_text(xml_text):
+    """
+    PMC 원본 XML 문자열(xml_text)에서
+    모든 <article> 요소의 <body> 부분만 추출해
+    텍스트를 합쳐 반환하는 예시 함수.
+    """
+    body_texts = []
+    
+    # 1) XML 파싱
+    root = ET.fromstring(xml_text)
+    # PMC XML 구조에서 여러 <article>이 있을 수 있으니, 각각 처리
+    articles = root.findall(".//article")
+    
+    for idx, article in enumerate(articles, start=1):
+        # 2) <body> 태그 찾기
+        body_elem = article.find(".//body")
+        if body_elem is None:
+            print(f"[WARN] article #{idx} 에는 <body>가 없음 (본문 공개 안됨)")
+            continue
+        
+        # 3) <body> 안에 있는 <p> 태그 텍스트 모으기 (예시)
+        paragraphs = body_elem.findall(".//p")
+        
+        # 해당 <p>는 다시 여러 child tag를 가질 수 있으므로,
+        # .itertext() 등을 써서 재귀적으로 텍스트만 모으는 방법도 있음.
+        
+        this_body_text = []
+        for p in paragraphs:
+            # p.text가 None일 수도 있으므로 안전하게 처리
+            paragraph_text = "".join(p.itertext())  # 하위 태그까지 텍스트로
+            this_body_text.append(paragraph_text.strip())
+        
+        # 여러 문단을 '\n' 로 연결
+        combined_text = "\n".join(this_body_text)
+        
+        # 결과 저장
+        body_texts.append(combined_text)
+    
+    # 모든 article의 body 텍스트를 합쳐 반환
+    return "\n\n--- ARTICLE SPLIT ---\n\n".join(body_texts)
+# BioPython 라이브러리 : PubMed API와 연동하기 위한 파이썬 라이브러리
+# Entrez은 미국 국립생물공학정보센터(NCBI)에서 제공하는 생물의학 데이터베이스에 대해 접근 가능
+from Bio import Entrez
+# 환경변수에서 API 키와 이메일을 가져오기 위한 라이브러리
+import os
+import dotenv
+# search_term : PubMed DB에 검색을 요청할 때 사용할 검색어 또는 검색 쿼리 문자열
+# max_papers : 검색 결과의 최대 개수
+def search_PubMed(search_term,max_papers=10):
+    # 환경변수에서 이메일과 API 키 읽어오기
+    dotenv.load_dotenv()
+    Entrez.email = os.getenv("NCBI_Email") # 문제 발생 시 사용자에게 연락하기 위함 - 필수로 입력해야 함
+    Entrez.api_key = os.getenv("NCBI_API_KEY")
+    # NCBI 서버 입장에서 어떤 프로그램이 요청을 보냈는지 식별하기 위한 이름표임
+    Entrez.tool = "PMC_Paper_Search"
+    try:
+        # 데이터베이스(pmc)에서 지정한 검색어로 검색 요청 - 정렬기준은 관련성
+        search_handle = Entrez.esearch(db="pmc", term=search_term, retmax=max_papers,sort="relevance")
+        # API의 XML응답을 파싱하여 파이썬 객체(딕셔너리 형태)로 변환
+        search_record = Entrez.read(search_handle)
+        search_handle.close() # 네트워크 연결 닫기
+
+        pmids = search_record["IdList"] # 검색 결과에서 PMID 추출 - 논문 고유 식별자
+        total_count = int(search_record["Count"]) # 검색 결과의 총 개수
+        print(f"'{search_term}' 키워드로 총 {total_count}개의 논문 중 {len(pmids)}개 검색됨.")
+        if not pmids:
+            print(f"'{search_term}' 키워드로 검색된 논문이 없습니다.")
+            # 검색 결과가 없을 경우 함수 종료
+            exit()
+        # 논문 원본 가져오기 
+        fetch_handle = Entrez.efetch(db="pmc", id=pmids,rettype="xml",retmode="xml")
+        
+        xml_data =fetch_handle.read() # XML 데이터 읽기
+        fetch_handle.close() # 네트워크 연결 닫기
+        xml_text = xml_data.decode("utf-8") # XML 데이터를 UTF-8로 디코딩
+        all_body_text = get_pmc_body_text(xml_text)
+        print("\n\n=== <BODY> TEXT EXTRACTED ===\n")
+        if all_body_text.strip():
+            print(all_body_text[:3000])  # 길면 일부만
+            if len(all_body_text) > 3000:
+                print("... [TRUNCATED] ...")
+        else:
+            print("[WARN] body 태그가 없거나 본문 텍스트가 비어있습니다.")
+    except Exception as e:
+        print(f"PubMed에서 논문 검색 중 오류 발생: {e}")
+        return None
+
 if __name__ == "__main__":
-    keyword = "Theory of Relativity"
+    keyword = "Lung cancer cure case"
     max_papers = 10  # 최대 검색 결과 수
-    search_arxiv(keyword, max_papers)
+    #search_arxiv(keyword, max_papers)
+    search_PubMed(keyword, max_papers)
