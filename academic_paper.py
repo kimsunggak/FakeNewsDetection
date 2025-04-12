@@ -46,47 +46,29 @@ def search_arxiv(keyword,max_papers=10):
     except Exception as e:
         print(f"arxiv에서 논문 검색 중 오류 발생: {e}")
         return None
-    
+# 원본 XML 문자에서 body 부분의 텍스트만 추출하는 함수
+# 우리가 필요한건 본문 텍스트뿐임    
 import xml.etree.ElementTree as ET
-def get_pmc_body_text(xml_text):
+def get_pmc_body_text(xml_text: str) -> str:
     """
-    PMC 원본 XML 문자열(xml_text)에서
-    모든 <article> 요소의 <body> 부분만 추출해
-    텍스트를 합쳐 반환하는 예시 함수.
+    주어진 PMC 원본 XML 문자열(xml_text)에서 모든 <article> 요소의 <body> 부분의 텍스트를 
+    재귀적으로 추출하여 하나의 문자열로 합쳐 반환한다.
+    각 논문은 구분자를 통해 분리된다.
     """
     body_texts = []
-    
-    # 1) XML 파싱
     root = ET.fromstring(xml_text)
-    # PMC XML 구조에서 여러 <article>이 있을 수 있으니, 각각 처리
     articles = root.findall(".//article")
     
     for idx, article in enumerate(articles, start=1):
-        # 2) <body> 태그 찾기
         body_elem = article.find(".//body")
         if body_elem is None:
             print(f"[WARN] article #{idx} 에는 <body>가 없음 (본문 공개 안됨)")
             continue
-        
-        # 3) <body> 안에 있는 <p> 태그 텍스트 모으기 (예시)
-        paragraphs = body_elem.findall(".//p")
-        
-        # 해당 <p>는 다시 여러 child tag를 가질 수 있으므로,
-        # .itertext() 등을 써서 재귀적으로 텍스트만 모으는 방법도 있음.
-        
-        this_body_text = []
-        for p in paragraphs:
-            # p.text가 None일 수도 있으므로 안전하게 처리
-            paragraph_text = "".join(p.itertext())  # 하위 태그까지 텍스트로
-            this_body_text.append(paragraph_text.strip())
-        
-        # 여러 문단을 '\n' 로 연결
-        combined_text = "\n".join(this_body_text)
-        
-        # 결과 저장
-        body_texts.append(combined_text)
+        # itertext()를 사용하여 <body> 내부의 모든 텍스트를 재귀적으로 추출.
+        # strip()을 사용하여 불필요한 공백 제거.
+        body_text = "\n".join(text.strip() for text in body_elem.itertext() if text.strip())
+        body_texts.append(body_text)
     
-    # 모든 article의 body 텍스트를 합쳐 반환
     return "\n\n--- ARTICLE SPLIT ---\n\n".join(body_texts)
 # BioPython 라이브러리 : PubMed API와 연동하기 위한 파이썬 라이브러리
 # Entrez은 미국 국립생물공학정보센터(NCBI)에서 제공하는 생물의학 데이터베이스에 대해 접근 가능
@@ -126,17 +108,19 @@ def search_PubMed(search_term,max_papers=10):
         all_body_text = get_pmc_body_text(xml_text)
         print("\n\n=== <BODY> TEXT EXTRACTED ===\n")
         if all_body_text.strip():
-            print(all_body_text[:3000])  # 길면 일부만
-            if len(all_body_text) > 3000:
-                print("... [TRUNCATED] ...")
+            snippet_length = 3000
+            print(all_body_text[:snippet_length] + ("... [TRUNCATED] ..." if len(all_body_text) > snippet_length else ""))
         else:
-            print("[WARN] body 태그가 없거나 본문 텍스트가 비어있습니다.")
+            print("[WARN] <body> 태그가 없거나 본문 텍스트가 비어있습니다.")
+        return all_body_text
     except Exception as e:
         print(f"PubMed에서 논문 검색 중 오류 발생: {e}")
         return None
-
+"""
+pdf링크로 다운로드한 논문을 읽어와서 본문 텍스트를 추출하는 함수로 해보기
+"""
 if __name__ == "__main__":
-    keyword = "Lung cancer cure case"
+    keyword = "The relationship between Kimchi and COVID-19"
     max_papers = 10  # 최대 검색 결과 수
     #search_arxiv(keyword, max_papers)
     search_PubMed(keyword, max_papers)
